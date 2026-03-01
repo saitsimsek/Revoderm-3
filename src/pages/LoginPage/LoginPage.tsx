@@ -18,6 +18,11 @@ export const LoginPage = () => {
     setError(null)
     setSubmitting(true)
     console.log("abc")
+    console.log("abc")
+    console.log("abc")
+    console.log("abc")
+    console.log("abc")
+    console.log("abc")
     try {
       await login(email, password)
       navigate(ROUTES.DASHBOARD)
