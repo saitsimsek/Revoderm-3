@@ -47,20 +47,6 @@ jobs:
           # Gemini'ye istek at
           prompt = f"""Sen bir senior yazılım mühendisisin. Aşağıdaki kod değişikliklerini incele ve Türkçe detaylı bir code review yap.
 
-Şunlara dikkat et:
-1. Potansiyel bug'lar ve hatalar
-2. Performans sorunları
-3. Güvenlik açıkları
-4. Kod kalitesi ve okunabilirlik
-5. Best practice'lere uygunluk
-
-Markdown formatında yaz. Eğer her şey yolundaysa bunu da belirt.
-
-Kod değişiklikleri:
-```diff
-{diff}
-```"""
-
           gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
           gemini_payload = json.dumps({
               "contents": [{"parts": [{"text": prompt}]}]
