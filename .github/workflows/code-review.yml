@@ -2,11 +2,7 @@ name: Gemini Code Review
 
 on:
   pull_request:
-    types: [opened, synchronize]
-  push:
-    branches:
-      - main
-      - master
+    types: [opened, synchronize, reopened]
 
 jobs:
   code-review:
@@ -22,13 +18,8 @@ jobs:
           fetch-depth: 0
 
       - name: Get changed files diff
-        id: diff
         run: |
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            git diff origin/${{ github.base_ref }}...HEAD > diff.txt
-          else
-            git diff HEAD~1 HEAD > diff.txt
-          fi
+          git diff origin/${{ github.base_ref }}...HEAD > diff.txt
           echo "Diff size: $(wc -c < diff.txt) bytes"
 
       - name: Run Gemini Code Review
@@ -38,36 +29,83 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
-          DIFF=$(cat diff.txt | head -c 30000)
+          python3 << 'EOF'
+          import os, json, urllib.request, sys
 
-          RESPONSE=$(curl -s -X POST \
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$GEMINI_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"contents\": [{
-                \"parts\": [{
-                  \"text\": \"Sen bir senior yazılım mühendisisin. Aşağıdaki kod değişikliklerini incele ve Türkçe detaylı bir code review yap. Şunlara dikkat et: 1) Potansiyel bug'lar ve hatalar, 2) Performans sorunları, 3) Güvenlik açıkları, 4) Kod kalitesi ve okunabilirlik, 5) Best practice'lere uygunluk. Markdown formatında yaz.\n\nKod değişiklikleri:\n\`\`\`diff\n$DIFF\n\`\`\`\"
-                }]
-              }]
-            }")
+          api_key = os.environ["GEMINI_API_KEY"]
+          gh_token = os.environ["GH_TOKEN"]
+          pr_number = os.environ.get("PR_NUMBER", "")
+          repo = os.environ["REPO"]
 
-          REVIEW=$(echo $RESPONSE | python3 -c "
-          import json, sys
-          data = json.load(sys.stdin)
-          text = data['candidates'][0]['content']['parts'][0]['text']
-          print(text)
-          " 2>/dev/null || echo "Review alınamadı. API yanıtı: $RESPONSE")
+          with open("diff.txt") as f:
+              diff = f.read(30000)
 
-          COMMENT="## 🤖 Gemini Code Review\n\n$REVIEW"
+          if not diff.strip():
+              print("ℹ️ Diff boş, incelenecek değişiklik yok.")
+              sys.exit(0)
 
-          if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ]; then
-            curl -s -X POST \
-              "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments" \
-              -H "Authorization: token $GH_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d "{\"body\": \"$(echo "$COMMENT" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')\"}"
-            echo "PR'a yorum eklendi."
-          else
-            echo "Push event - Review:"
-            echo "$REVIEW"
-          fi
+          # Gemini'ye istek at
+          prompt = f"""Sen bir senior yazılım mühendisisin. Aşağıdaki kod değişikliklerini incele ve Türkçe detaylı bir code review yap.
+
+Şunlara dikkat et:
+1. Potansiyel bug'lar ve hatalar
+2. Performans sorunları
+3. Güvenlik açıkları
+4. Kod kalitesi ve okunabilirlik
+5. Best practice'lere uygunluk
+
+Markdown formatında yaz. Eğer her şey yolundaysa bunu da belirt.
+
+Kod değişiklikleri:
+```diff
+{diff}
+```"""
+
+          gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+          gemini_payload = json.dumps({
+              "contents": [{"parts": [{"text": prompt}]}]
+          }).encode()
+
+          print("🔍 Gemini'ye istek atılıyor...")
+          req = urllib.request.Request(
+              gemini_url,
+              data=gemini_payload,
+              headers={"Content-Type": "application/json"}
+          )
+
+          try:
+              with urllib.request.urlopen(req) as res:
+                  data = json.loads(res.read())
+          except urllib.error.HTTPError as e:
+              print(f"❌ Gemini API hatası: {e.code} {e.reason}")
+              print(e.read().decode())
+              sys.exit(1)
+
+          review = data["candidates"][0]["content"]["parts"][0]["text"]
+          comment_body = f"## 🤖 Gemini Code Review\n\n{review}"
+
+          print("✅ Gemini review alındı, PR'a yorum ekleniyor...")
+
+          # PR'a yorum ekle
+          gh_url = f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments"
+          gh_payload = json.dumps({"body": comment_body}).encode()
+          req = urllib.request.Request(
+              gh_url,
+              data=gh_payload,
+              headers={
+                  "Authorization": f"token {gh_token}",
+                  "Content-Type": "application/json",
+                  "Accept": "application/vnd.github+json"
+              }
+          )
+
+          try:
+              with urllib.request.urlopen(req) as res:
+                  result = json.loads(res.read())
+                  print(f"✅ Yorum başarıyla eklendi: {result.get('html_url')}")
+          except urllib.error.HTTPError as e:
+              print(f"❌ GitHub API hatası: {e.code} {e.reason}")
+              print(e.read().decode())
+              sys.exit(1)
+
+          EOF
