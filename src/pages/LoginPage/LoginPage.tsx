@@ -17,7 +17,7 @@ export const LoginPage = () => {
     event.preventDefault()
     setError(null)
     setSubmitting(true)
-
+    console.log("abc")
     try {
       await login(email, password)
       navigate(ROUTES.DASHBOARD)
