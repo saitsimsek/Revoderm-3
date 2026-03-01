@@ -44,9 +44,6 @@ jobs:
               print("ℹ️ Diff boş, incelenecek değişiklik yok.")
               sys.exit(0)
 
-          # Gemini'ye istek at
-          prompt = f"""Sen bir senior yazılım mühendisisin. Aşağıdaki kod değişikliklerini incele ve Türkçe detaylı bir code review yap.
-
           gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
           gemini_payload = json.dumps({
               "contents": [{"parts": [{"text": prompt}]}]
@@ -72,7 +69,6 @@ jobs:
 
           print("✅ Gemini review alındı, PR'a yorum ekleniyor...")
 
-          # PR'a yorum ekle
           gh_url = f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments"
           gh_payload = json.dumps({"body": comment_body}).encode()
           req = urllib.request.Request(
