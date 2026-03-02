@@ -16,6 +16,7 @@ export const DashboardPage = () => {
       <h1>Dashboard</h1>
       <p>Welcome, {user?.name ?? 'User'}.</p>
       <button type="button" className="button" onClick={onLogout}>
+          <button type="button" className="button" onClick={onLogout}>
         Logout
       </button>
     </main>
