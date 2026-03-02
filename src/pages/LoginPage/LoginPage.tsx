@@ -21,6 +21,7 @@ export const LoginPage = () => {
       console.log("abc") 
        console.log("abc") 
       console.log("abc") 
+     console.log("abc") 
     try {
       await login(email, password)
       navigate(ROUTES.DASHBOARD)
