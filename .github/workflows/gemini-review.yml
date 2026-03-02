@@ -15,56 +15,62 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 2 # Diff alabilmek için gerekli
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      - name: Install dependencies
-        run: pip install google-generativeai
+      - name: Install Gemini Library
+        run: pip install -q -U google-generativeai
 
-      - name: Run Gemini Review
+      - name: Gemini Review Script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           python - <<EOF
           import os
           import google.generativeai as genai
           import subprocess
+          import json
+          from urllib.request import Request, urlopen
 
-          # Gemini Ayarları
+          # 1. Gemini Yapılandırması
           genai.configure(api_key=os.environ["GEMINI_API_KEY"])
           model = genai.GenerativeModel('gemini-1.5-flash')
 
-          # Diff Al
-          diff = subprocess.check_output(['git', 'diff', 'origin/${{ github.base_ref }}', 'HEAD']).decode('utf-8')
-          
-          if not diff:
-              print("No changes to review.")
+          # 2. Değişiklikleri (Diff) Al
+          try:
+              diff = subprocess.check_output(['git', 'diff', 'HEAD~1', 'HEAD']).decode('utf-8')
+          except:
+              diff = "Diff alınamadı."
+
+          if not diff or len(diff) < 10:
+              print("İncelenecek anlamlı bir değişiklik bulunamadı.")
               exit(0)
 
-          # Prompt Hazırla
-          prompt = f"Bir senior yazılım geliştiricisi gibi davran. Aşağıdaki kod değişikliklerini incele ve varsa hataları, güvenlik açıklarını veya iyileştirme önerilerini Türkçe olarak kısa maddelerle yaz:\n\n{diff}"
+          # 3. Gemini'ye Sor
+          prompt = f"Aşağıdaki kod değişikliklerini bir senior developer gibi incele. Kritik hataları ve iyileştirme önerilerini Türkçe, kısa maddelerle yaz:\n\n{diff}"
           
-          response = model.generate_content(prompt)
-          review_text = response.text
+          try:
+              response = model.generate_content(prompt)
+              review_text = response.text
+          except Exception as e:
+              review_text = f"Gemini analizi sırasında hata oluştu: {str(e)}"
 
-          # GitHub'a Yorum Olarak Yaz
-          from urllib.request import Request, urlopen
-          import json
-
+          # 4. GitHub PR'a Yorum Yaz
           url = f"https://api.github.com/repos/{os.environ['REPO']}/issues/{os.environ['PR_NUMBER']}/comments"
           headers = {
               "Authorization": f"token {os.environ['GITHUB_TOKEN']}",
-              "Accept": "application/vnd.github.v3+json"
+              "Content-Type": "application/json"
           }
-          data = json.dumps({"body": f"### 🤖 Gemini Kod Analizi\n\n{review_text}"}).encode()
+          payload = json.dumps({"body": f"### 🤖 Gemini Kod Analizi\n\n{review_text}"}).encode()
           
-          req = Request(url, data=data, headers=headers)
-          urlopen(req)
+          req = Request(url, data=payload, headers=headers, method='POST')
+          with urlopen(req) as f:
+              print(f"Yorum gönderildi: {f.status}")
           EOF
