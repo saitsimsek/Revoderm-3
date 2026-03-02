@@ -20,10 +20,10 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: '3.11' # Uyarıyı engellemek için 3.11'e yükselttik
 
-      - name: Install Gemini Library
-        run: pip install -q -U google-generativeai
+      - name: Install New Gemini SDK
+        run: pip install -q -U google-genai # Yeni nesil SDK'yı yüklüyoruz
 
       - name: Gemini Review Execution
         env:
@@ -34,30 +34,48 @@ jobs:
         run: |
           python - <<EOF
           import os
-          import google.generativeai as genai
-          import subprocess
           import json
+          import subprocess
           import urllib.request
+          from genai import Client # Yeni SDK kullanımı
 
-          genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-          model = genai.GenerativeModel('gemini-1.5-flash')
+          # 1. Gemini Yapılandırması
+          client = Client(api_key=os.environ["GEMINI_API_KEY"])
 
           try:
+              # 2. Diff Al
               diff = subprocess.check_output(['git', 'diff', 'HEAD~1', 'HEAD']).decode('utf-8')
+              
               if not diff or len(diff.strip()) < 10:
-                  print("No changes.")
+                  print("Incelenecek anlamlı bir değişiklik yok.")
                   exit(0)
 
-              prompt = f"Aşağıdaki kod değişikliklerini incele ve Türkçe öneriler ver:\n\n{diff}"
-              response = model.generate_content(prompt)
+              # 3. Analiz Talebi
+              prompt = f"Sen kıdemli bir yazılım geliştiricisisin. Aşağıdaki kod değişikliklerini incele. Hataları ve iyileştirme önerilerini Türkçe, kısa maddelerle raporla:\n\n{diff}"
               
+              # Yeni SDK formatında model çağırma
+              response = client.models.generate_content(
+                  model="gemini-2.0-flash", # En güncel ve hızlı model
+                  contents=prompt
+              )
+              
+              review_comment = f"### 🤖 Gemini AI Kod Analizi\n\n{response.text}"
+
+              # 4. GitHub PR'a Yorum Yaz
               url = f"https://api.github.com/repos/{os.environ['REPO']}/issues/{os.environ['PR_NUMBER']}/comments"
-              headers = {"Authorization": f"token {os.environ['GITHUB_TOKEN']}", "Content-Type": "application/json"}
-              data = json.dumps({"body": f"### 🤖 Gemini Analizi\n\n{response.text}"}).encode()
+              headers = {
+                  "Authorization": f"token {os.environ['GITHUB_TOKEN']}",
+                  "Accept": "application/vnd.github.v3+json",
+                  "Content-Type": "application/json"
+              }
               
+              data = json.dumps({"body": review_comment}).encode()
               req = urllib.request.Request(url, data=data, headers=headers, method='POST')
+              
               with urllib.request.urlopen(req) as f:
-                  print("Yorum yapıldı.")
+                  print(f"Yorum başarıyla gönderildi: {f.status}")
+
           except Exception as e:
-              print(f"Hata: {e}")
+              print(f"Hata oluştu: {str(e)}")
+              exit(1)
           EOF
