@@ -1,0 +1,79 @@
+name: Gemini Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Gemini SDK
+        run: pip install -q -U google-generativeai
+
+      - name: Gemini Review Execution
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python - <<EOF
+          import os
+          import json
+          import subprocess
+          import urllib.request
+          import google.generativeai as genai
+
+          # 1. Yapılandırma
+          genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+          
+          # En stabil model ismini kullanıyoruz
+          model = genai.GenerativeModel('gemini-1.5-flash')
+
+          try:
+              # 2. Diff Al (Son commit ile bir önceki arasındaki fark)
+              diff = subprocess.check_output(['git', 'diff', 'HEAD~1', 'HEAD']).decode('utf-8')
+              
+              if not diff or len(diff.strip()) < 10:
+                  print("Anlamlı bir değişiklik bulunamadı.")
+                  exit(0)
+
+              # 3. Analiz Talebi
+              prompt = f"Sen kıdemli bir yazılım geliştiricisisin. Aşağıdaki kod değişikliklerini incele. Hataları ve iyileştirme önerilerini Türkçe, kısa maddelerle raporla:\n\n{diff}"
+              
+              response = model.generate_content(prompt)
+              review_comment = f"### 🤖 Gemini AI Kod Analizi\n\n{response.text}"
+
+              # 4. GitHub API ile Yorum Yaz
+              url = f"https://api.github.com/repos/{os.environ['REPO']}/issues/{os.environ['PR_NUMBER']}/comments"
+              headers = {
+                  "Authorization": f"token {os.environ['GITHUB_TOKEN']}",
+                  "Accept": "application/vnd.github.v3+json",
+                  "Content-Type": "application/json"
+              }
+              
+              data = json.dumps({"body": review_comment}).encode()
+              req = urllib.request.Request(url, data=data, headers=headers, method='POST')
+              
+              with urllib.request.urlopen(req) as f:
+                  print(f"Yorum gönderildi: {f.status}")
+
+          except Exception as e:
+              print(f"Hata: {str(e)}")
+              exit(1)
+          EOF
