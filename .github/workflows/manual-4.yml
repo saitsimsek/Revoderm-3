@@ -1,0 +1,82 @@
+name: Gemini Code Review-4
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Gemini Review Execution
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python - <<EOF
+          import os, json, subprocess, urllib.request
+
+          def get_working_model(api_key):
+              # Kullanılabilir modelleri listele ve uygun olanı seç
+              list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+              try:
+                  with urllib.request.urlopen(list_url) as response:
+                      data = json.loads(response.read().decode())
+                      models = [m['name'] for m in data.get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
+                      # Öncelikle flash modellerini ara
+                      for m in models:
+                          if 'gemini-1.5-flash' in m or 'gemini-2.0-flash' in m:
+                              return m
+                      return models[0] if models else None
+              except:
+                  return "models/gemini-1.5-flash" # Fallback
+
+          def run_review():
+              api_key = os.environ["GEMINI_API_KEY"]
+              model_path = get_working_model(api_key)
+              print(f"Kullanılan Model: {model_path}")
+
+              try:
+                  diff = subprocess.check_output(['git', 'diff', 'HEAD~1', 'HEAD']).decode('utf-8')
+              except: return
+
+              if not diff.strip(): return
+
+              # Dinamik URL oluşturma
+              gemini_url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent?key={api_key}"
+              
+              prompt = f"Sen senior developersın. Kod farklarını inceleyip Türkçe kısa maddelerle PR yorumu yaz:\n\n{diff}"
+              payload = {"contents": [{"parts": [{"text": prompt}]}]}
+
+              req = urllib.request.Request(gemini_url, data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
+              
+              try:
+                  with urllib.request.urlopen(req) as response:
+                      result = json.loads(response.read().decode())
+                      review_text = result['candidates'][0]['content']['parts'][0]['text']
+              except Exception as e:
+                  print(f"Gemini API Hatası: {e}")
+                  return
+
+              # GitHub Yorumu
+              github_url = f"https://api.github.com/repos/{os.environ['REPO']}/issues/{os.environ['PR_NUMBER']}/comments"
+              headers = {"Authorization": f"token {os.environ['GITHUB_TOKEN']}", "Content-Type": "application/json"}
+              comment_data = json.dumps({"body": f"### 🤖 Gemini Analizi\n\n{review_text}"}).encode()
+              
+              github_req = urllib.request.Request(github_url, data=comment_data, headers=headers, method='POST')
+              with urllib.request.urlopen(github_req) as f:
+                  print(f"İşlem Tamam: {f.status}")
+
+          run_review()
+          EOF
