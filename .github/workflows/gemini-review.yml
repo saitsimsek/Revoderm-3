@@ -1,0 +1,37 @@
+name: Gemini Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get diff
+        id: get_diff
+        run: |
+          git diff origin/${{ github.base_ref }} HEAD > diff.txt
+          echo "diff_content<<EOF" >> $GITHUB_ENV
+          cat diff.txt >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Gemini AI Review
+        uses: google-gemini/gemini-github-action@v1 # Topluluk tarafından desteklenen hazır actionlar mevcuttur
+        with:
+          api-key: ${{ secrets.GEMINI_API_KEY }}
+          model: 'gemini-1.5-flash' # Hızlı ve ekonomik olduğu için flash önerilir
+          prompt: |
+            Aşağıdaki kod değişikliklerini (diff) incele. 
+            Hataları, performans sorunlarını ve temiz kod prensiplerine aykırı durumları belirt. 
+            Yanıtını Türkçe ver ve her öneri için kısa bir açıklama ekle.
+          github-token: ${{ secrets.GITHUB_TOKEN }}
