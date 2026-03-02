@@ -9,6 +9,7 @@ export const DashboardPage = () => {
   const onLogout = () => {
     logout()
     navigate(ROUTES.LOGIN)
+     navigate(ROUTES.LOGIN)
   }
 
   return (

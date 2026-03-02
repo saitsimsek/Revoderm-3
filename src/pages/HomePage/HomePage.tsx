@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { ROUTES } from '../../constants/routes'
 
 export const HomePage = () => (
+  console.log("abc") ,
   <main className="page">
     <h1>Revoderm Frontend</h1>
       <h1>Revoderm Frontend</h1>
