@@ -17,21 +17,54 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Get diff
-        id: get_diff
-        run: |
-          git diff origin/${{ github.base_ref }} HEAD > diff.txt
-          echo "diff_content<<EOF" >> $GITHUB_ENV
-          cat diff.txt >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-
-      - name: Gemini AI Review
-        uses: google-gemini/gemini-github-action@v1 # Topluluk tarafından desteklenen hazır actionlar mevcuttur
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
-          api-key: ${{ secrets.GEMINI_API_KEY }}
-          model: 'gemini-1.5-flash' # Hızlı ve ekonomik olduğu için flash önerilir
-          prompt: |
-            Aşağıdaki kod değişikliklerini (diff) incele. 
-            Hataları, performans sorunlarını ve temiz kod prensiplerine aykırı durumları belirt. 
-            Yanıtını Türkçe ver ve her öneri için kısa bir açıklama ekle.
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install google-generativeai
+
+      - name: Run Gemini Review
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          python - <<EOF
+          import os
+          import google.generativeai as genai
+          import subprocess
+
+          # Gemini Ayarları
+          genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+          model = genai.GenerativeModel('gemini-1.5-flash')
+
+          # Diff Al
+          diff = subprocess.check_output(['git', 'diff', 'origin/${{ github.base_ref }}', 'HEAD']).decode('utf-8')
+          
+          if not diff:
+              print("No changes to review.")
+              exit(0)
+
+          # Prompt Hazırla
+          prompt = f"Bir senior yazılım geliştiricisi gibi davran. Aşağıdaki kod değişikliklerini incele ve varsa hataları, güvenlik açıklarını veya iyileştirme önerilerini Türkçe olarak kısa maddelerle yaz:\n\n{diff}"
+          
+          response = model.generate_content(prompt)
+          review_text = response.text
+
+          # GitHub'a Yorum Olarak Yaz
+          from urllib.request import Request, urlopen
+          import json
+
+          url = f"https://api.github.com/repos/{os.environ['REPO']}/issues/{os.environ['PR_NUMBER']}/comments"
+          headers = {
+              "Authorization": f"token {os.environ['GITHUB_TOKEN']}",
+              "Accept": "application/vnd.github.v3+json"
+          }
+          data = json.dumps({"body": f"### 🤖 Gemini Kod Analizi\n\n{review_text}"}).encode()
+          
+          req = Request(url, data=data, headers=headers)
+          urlopen(req)
+          EOF
