@@ -1,0 +1,104 @@
+name: Gemini Code Review-3
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Gemini Review Execution
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python - <<EOF
+          import os
+          import json
+          import subprocess
+          import urllib.request
+
+          def run_review():
+              api_key = os.environ["GEMINI_API_KEY"]
+              repo = os.environ["REPO"]
+              pr_number = os.environ["PR_NUMBER"]
+              github_token = os.environ["GITHUB_TOKEN"]
+
+              # 1. Kod Değişikliğini Al
+              try:
+                  diff = subprocess.check_output(['git', 'diff', 'HEAD~1', 'HEAD']).decode('utf-8')
+              except Exception as e:
+                  print(f"Diff hatası: {e}")
+                  return
+
+              if not diff or len(diff.strip()) < 10:
+                  print("Analiz edilecek anlamlı bir değişiklik yok.")
+                  return
+
+              # 2. Gemini API İsteği (v1beta kullanımı 404 hatalarını genellikle çözer)
+              # Model ismini 'models/gemini-1.5-flash' formatında kullanıyoruz
+              gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+              
+              prompt = f"Sen bir senior developersın. Aşağıdaki kod farklarını incele ve hataları/iyileştirmeleri Türkçe olarak kısa maddelerle yaz:\n\n{diff}"
+              
+              payload = {
+                  "contents": [{
+                      "parts": [{"text": prompt}]
+                  }]
+              }
+
+              req = urllib.request.Request(
+                  gemini_url, 
+                  data=json.dumps(payload).encode(), 
+                  headers={'Content-Type': 'application/json'}
+              )
+              
+              try:
+                  with urllib.request.urlopen(req) as response:
+                      result = json.loads(response.read().decode())
+                      # API yanıt yapısını kontrol ederek veriyi al
+                      if 'candidates' in result:
+                          review_text = result['candidates'][0]['content']['parts'][0]['text']
+                      else:
+                          print(f"API Yanıt Hatası: {result}")
+                          return
+              except Exception as e:
+                  print(f"Gemini API Hatası: {e}")
+                  return
+
+              # 3. GitHub PR'a Yorum Yaz
+              github_url = f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments"
+              headers = {
+                  "Authorization": f"token {github_token}",
+                  "Accept": "application/vnd.github.v3+json",
+                  "Content-Type": "application/json"
+              }
+              
+              comment_data = json.dumps({"body": f"### 🤖 Gemini AI Analizi\n\n{review_text}"}).encode()
+              github_req = urllib.request.Request(github_url, data=comment_data, headers=headers, method='POST')
+              
+              try:
+                  with urllib.request.urlopen(github_req) as f:
+                      print(f"Başarıyla PR'a yorum yapıldı: {f.status}")
+              except Exception as e:
+                  print(f"GitHub API Hatası: {e}")
+
+          run_review()
+          EOF
