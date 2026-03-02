@@ -1,0 +1,83 @@
+name: Gemini Code Review -1
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Modern Gemini SDK
+        # 'google-genai' paketini kuruyoruz, bu yeni standarttır
+        run: pip install -q -U google-genai 
+
+      - name: Gemini Review Execution
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python - <<EOF
+          import os
+          import json
+          import subprocess
+          import urllib.request
+          from genai import Client # Yeni SDK'nın doğru import şekli
+
+          # 1. Yeni SDK ile istemciyi başlat
+          # Bu yöntem otomatik olarak en güncel API sürümünü kullanır
+          client = Client(api_key=os.environ["GEMINI_API_KEY"])
+
+          try:
+              # 2. Kod değişikliklerini al
+              diff = subprocess.check_output(['git', 'diff', 'HEAD~1', 'HEAD']).decode('utf-8')
+              
+              if not diff or len(diff.strip()) < 10:
+                  print("Analiz edilecek değişiklik yok.")
+                  exit(0)
+
+              # 3. Analiz isteği gönder
+              # Model ismini tırnak içinde yalın halde yazıyoruz
+              prompt = f"Sen bir senior developersın. Şu kod değişikliklerini incele, hataları ve iyileştirmeleri Türkçe maddelerle yaz:\n\n{diff}"
+              
+              response = client.models.generate_content(
+                  model="gemini-2.0-flash", # En güncel ve ücretsiz kota dostu model
+                  contents=prompt
+              )
+              
+              review_comment = f"### 🤖 Gemini 2.0 Analizi\n\n{response.text}"
+
+              # 4. GitHub PR yorumu gönder
+              url = f"https://api.github.com/repos/{os.environ['REPO']}/issues/{os.environ['PR_NUMBER']}/comments"
+              headers = {
+                  "Authorization": f"token {os.environ['GITHUB_TOKEN']}",
+                  "Accept": "application/vnd.github.v3+json",
+                  "Content-Type": "application/json"
+              }
+              
+              data = json.dumps({"body": review_comment}).encode()
+              req = urllib.request.Request(url, data=data, headers=headers, method='POST')
+              
+              with urllib.request.urlopen(req) as f:
+                  print(f"Başarıyla yorumlandı: {f.status}")
+
+          except Exception as e:
+              print(f"Hata detayı: {str(e)}")
+              exit(1)
+          EOF
